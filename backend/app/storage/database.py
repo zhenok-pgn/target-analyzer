@@ -1,24 +1,56 @@
-from sqlalchemy import create_engine, text
-from sqlalchemy.engine import Engine
+import os
+from collections.abc import Generator
 
-from app.config import settings
+from sqlalchemy import create_engine
+from sqlalchemy.orm import Session, sessionmaker
+
+from app.storage.models import Base
 
 
-engine: Engine = create_engine(
-    settings.database_url,
+DATABASE_URL = os.getenv("DATABASE_URL")
+
+if not DATABASE_URL:
+    raise RuntimeError(
+        "Переменная окружения DATABASE_URL не задана. "
+        "Укажите строку подключения к PostgreSQL."
+    )
+
+
+engine = create_engine(
+    DATABASE_URL,
+    echo=False,
     pool_pre_ping=True,
     pool_size=5,
     max_overflow=10,
+    pool_recycle=1800,
 )
 
 
-def check_database_connection() -> bool:
+SessionLocal = sessionmaker(
+    bind=engine,
+    class_=Session,
+    autoflush=False,
+    autocommit=False,
+    expire_on_commit=False,
+)
+
+
+def get_db() -> Generator[Session, None, None]:
     """
-    Проверяет доступность PostgreSQL.
+    Создаёт сессию БД для одного запроса FastAPI
+    и гарантированно закрывает её после завершения.
     """
+    db = SessionLocal()
+
     try:
-        with engine.connect() as connection:
-            connection.execute(text("SELECT 1"))
-        return True
-    except Exception:
-        return False
+        yield db
+    finally:
+        db.close()
+
+
+__all__ = [
+    "Base",
+    "engine",
+    "SessionLocal",
+    "get_db",
+]
