@@ -1,8 +1,3 @@
-from typing import TYPE_CHECKING
-
-if TYPE_CHECKING:
-    from app.storage.models.target_profile_version import TargetProfileVersion
-
 from __future__ import annotations
 
 import uuid
@@ -24,6 +19,10 @@ from app.storage.models.base import (
     UUIDPrimaryKeyMixin,
 )
 
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from app.storage.models.target_profile_version import TargetProfileVersion
 
 class TargetZone(UUIDPrimaryKeyMixin, Base):
     __tablename__ = "target_zones"

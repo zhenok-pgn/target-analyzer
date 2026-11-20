@@ -1,49 +1,69 @@
-from logging.config import fileConfig
 
-from sqlalchemy import engine_from_config
-from sqlalchemy import pool
+from __future__ import annotations
+
+import os
+import sys
+from logging.config import fileConfig
+from pathlib import Path
 
 from alembic import context
+from sqlalchemy import engine_from_config, pool
 
-# this is the Alembic Config object, which provides
-# access to the values within the .ini file in use.
+# Добавляем backend в Python path, чтобы Alembic мог импортировать app.
+BACKEND_DIR = Path(__file__).resolve().parents[1]
+
+if str(BACKEND_DIR) not in sys.path:
+    sys.path.insert(0, str(BACKEND_DIR))
+
+from app.storage.models import Base  # noqa: E402
+from dotenv import load_dotenv
+
+
+# Конфигурация Alembic.
 config = context.config
 
-# Interpret the config file for Python logging.
-# This line sets up loggers basically.
+# Настраиваем логирование из alembic.ini, если файл конфигурации указан.
 if config.config_file_name is not None:
     fileConfig(config.config_file_name)
 
-# add your model's MetaData object here
-# for 'autogenerate' support
-# from myapp import mymodel
-# target_metadata = mymodel.Base.metadata
-target_metadata = None
+# Получаем URL базы данных из переменной окружения.
+# Если DATABASE_URL не задана, используется sqlalchemy.url из alembic.ini.
+load_dotenv(BACKEND_DIR.parent / ".env")
+database_url = os.getenv("DATABASE_URL")
 
-# other values from the config, defined by the needs of env.py,
-# can be acquired:
-# my_important_option = config.get_main_option("my_important_option")
-# ... etc.
+if database_url:
+    # Экранируем символ %, поскольку Config использует configparser.
+    config.set_main_option(
+        "sqlalchemy.url",
+        database_url.replace("%", "%%"),
+    )
+
+# Метаданные всех моделей приложения.
+target_metadata = Base.metadata
 
 
 def run_migrations_offline() -> None:
-    """Run migrations in 'offline' mode.
+    """
+    Запуск миграций без создания подключения к базе данных.
 
-    This configures the context with just a URL
-    and not an Engine, though an Engine is acceptable
-    here as well.  By skipping the Engine creation
-    we don't even need a DBAPI to be available.
-
-    Calls to context.execute() here emit the given string to the
-    script output.
-
+    SQL миграций формируется на основе URL и метаданных моделей.
     """
     url = config.get_main_option("sqlalchemy.url")
+
+    if not url:
+        raise RuntimeError(
+            "Не задан URL базы данных. "
+            "Укажите DATABASE_URL или sqlalchemy.url в alembic.ini."
+        )
+
     context.configure(
         url=url,
         target_metadata=target_metadata,
         literal_binds=True,
         dialect_opts={"paramstyle": "named"},
+        compare_type=True,
+        compare_server_default=True,
+        include_schemas=True,
     )
 
     with context.begin_transaction():
@@ -51,25 +71,46 @@ def run_migrations_offline() -> None:
 
 
 def run_migrations_online() -> None:
-    """Run migrations in 'online' mode.
-
-    In this scenario we need to create an Engine
-    and associate a connection with the context.
-
     """
+    Запуск миграций с подключением к базе данных.
+    """
+    configuration = config.get_section(config.config_ini_section)
+
+    if configuration is None:
+        raise RuntimeError(
+            "Не удалось прочитать секцию конфигурации Alembic."
+        )
+
+    configuration["sqlalchemy.url"] = config.get_main_option(
+        "sqlalchemy.url"
+    )
+
+    if not configuration["sqlalchemy.url"]:
+        raise RuntimeError(
+            "Не задан URL базы данных. "
+            "Укажите DATABASE_URL или sqlalchemy.url в alembic.ini."
+        )
+
     connectable = engine_from_config(
-        config.get_section(config.config_ini_section, {}),
+        configuration,
         prefix="sqlalchemy.",
         poolclass=pool.NullPool,
     )
 
-    with connectable.connect() as connection:
-        context.configure(
-            connection=connection, target_metadata=target_metadata
-        )
+    try:
+        with connectable.connect() as connection:
+            context.configure(
+                connection=connection,
+                target_metadata=target_metadata,
+                compare_type=True,
+                compare_server_default=True,
+                include_schemas=True,
+            )
 
-        with context.begin_transaction():
-            context.run_migrations()
+            with context.begin_transaction():
+                context.run_migrations()
+    finally:
+        connectable.dispose()
 
 
 if context.is_offline_mode():
